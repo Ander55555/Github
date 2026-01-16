@@ -1,0 +1,454 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Search, User, Users, Book, Star, GitFork, ExternalLink, 
+  Code, Github, AlertCircle, Loader2, File, Folder, 
+  ChevronRight, ArrowLeft, X, FileJson, FileCode, FileText 
+} from 'lucide-react';
+
+export default function App() {
+  const [query, setQuery] = useState('');
+  const [userData, setUserData] = useState(null);
+  const [repos, setRepos] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // File Explorer State
+  const [activeRepo, setActiveRepo] = useState(null); // The repo currently being viewed
+  const [currentPath, setCurrentPath] = useState('');
+  const [dirContents, setDirContents] = useState([]);
+  const [fileContent, setFileContent] = useState(null); // If viewing a specific file
+  const [explorerLoading, setExplorerLoading] = useState(false);
+  const [explorerError, setExplorerError] = useState(null);
+
+  // Initial search on load
+  useEffect(() => {
+    fetchGitHubData('facebook');
+  }, []);
+
+  // --- Main Data Fetching ---
+  const fetchGitHubData = async (username) => {
+    if (!username) return;
+    
+    setLoading(true);
+    setError(null);
+    setUserData(null);
+    setRepos([]);
+
+    try {
+      const userRes = await fetch(`https://api.github.com/users/${username}`);
+      
+      if (!userRes.ok) {
+        if (userRes.status === 404) throw new Error('User not found');
+        if (userRes.status === 403) throw new Error('API rate limit exceeded. Try again later.');
+        throw new Error('Failed to fetch user data');
+      }
+      
+      const userData = await userRes.json();
+      setUserData(userData);
+
+      const reposRes = await fetch(`https://api.github.com/users/${username}/repos?sort=updated&per_page=12`);
+      
+      if (reposRes.ok) {
+        const reposData = await reposRes.json();
+        setRepos(reposData);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    fetchGitHubData(query);
+  };
+
+  // --- File Explorer Logic ---
+  
+  const openRepo = (repo) => {
+    setActiveRepo(repo);
+    setCurrentPath('');
+    setFileContent(null);
+    fetchRepoContents(repo.owner.login, repo.name, '');
+  };
+
+  const closeRepo = () => {
+    setActiveRepo(null);
+    setDirContents([]);
+    setFileContent(null);
+    setExplorerError(null);
+  };
+
+  const fetchRepoContents = async (owner, repo, path) => {
+    setExplorerLoading(true);
+    setExplorerError(null);
+    setFileContent(null); // Reset file viewer
+    try {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`);
+      if (!res.ok) throw new Error('Unable to fetch contents (Rate limit or access denied)');
+      
+      const data = await res.json();
+      
+      if (Array.isArray(data)) {
+        // It's a directory
+        setDirContents(data.sort((a, b) => {
+            // Sort folders first, then files
+            if (a.type === 'dir' && b.type !== 'dir') return -1;
+            if (a.type !== 'dir' && b.type === 'dir') return 1;
+            return a.name.localeCompare(b.name);
+        }));
+        setCurrentPath(path);
+      } else if (data.type === 'file') {
+        // It's a file, fetch the content
+        fetchFileContent(data.download_url);
+      }
+    } catch (err) {
+      setExplorerError(err.message);
+    } finally {
+      setExplorerLoading(false);
+    }
+  };
+
+  const fetchFileContent = async (url) => {
+    setExplorerLoading(true);
+    try {
+      const res = await fetch(url);
+      const text = await res.text();
+      setFileContent(text);
+    } catch (err) {
+      setExplorerError("Failed to load file content.");
+    } finally {
+      setExplorerLoading(false);
+    }
+  };
+
+  const navigateUp = () => {
+    if (!currentPath) return;
+    const newPath = currentPath.split('/').slice(0, -1).join('/');
+    // If we were viewing a file, just clear file content to go back to the dir list
+    if (fileContent) {
+      setFileContent(null);
+    } else {
+      fetchRepoContents(userData.login, activeRepo.name, newPath);
+    }
+  };
+
+  const handleItemClick = (item) => {
+    if (item.type === 'dir') {
+      fetchRepoContents(userData.login, activeRepo.name, item.path);
+    } else {
+      // It's a file
+      fetchFileContent(item.download_url);
+    }
+  };
+
+  // Helper for icons based on file name
+  const getFileIcon = (name, type) => {
+    if (type === 'dir') return <Folder className="w-5 h-5 text-blue-400 fill-blue-400/20" />;
+    if (name.endsWith('.js') || name.endsWith('.jsx') || name.endsWith('.ts')) return <FileCode className="w-5 h-5 text-yellow-400" />;
+    if (name.endsWith('.json')) return <FileJson className="w-5 h-5 text-green-400" />;
+    if (name.endsWith('.md')) return <Book className="w-5 h-5 text-purple-400" />;
+    return <FileText className="w-5 h-5 text-zinc-400" />;
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-zinc-100 font-sans selection:bg-zinc-800 selection:text-white">
+      
+      {/* Header */}
+      <header className="border-b border-zinc-800 bg-black/80 backdrop-blur-md sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="bg-white p-1 rounded-full">
+              <Github className="w-6 h-6 text-black" />
+            </div>
+            <h1 className="text-xl font-bold tracking-tight text-white">
+              GitHub<span className="text-zinc-500">Explorer</span>
+            </h1>
+          </div>
+          
+          <form onSubmit={handleSearch} className="w-full md:w-96 relative group">
+            <div className="absolute inset-0 bg-gradient-to-r from-zinc-800 to-zinc-700 rounded-full blur opacity-25 group-focus-within:opacity-50 transition duration-500"></div>
+            <input
+              type="text"
+              placeholder="Search username..."
+              className="relative w-full bg-black border border-zinc-800 rounded-full py-2 pl-4 pr-12 focus:outline-none focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 text-sm placeholder-zinc-600 transition-all"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button 
+              type="submit"
+              className="absolute right-1 top-1 p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-full text-zinc-300 transition-colors z-10"
+              disabled={loading}
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            </button>
+          </form>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        {/* Error State */}
+        {error && (
+          <div className="mb-8 p-4 bg-red-900/20 border border-red-900/50 rounded-lg flex items-center gap-3 text-red-400">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <p>{error}</p>
+          </div>
+        )}
+
+        {/* Loading State */}
+        {loading && !userData && (
+           <div className="flex flex-col items-center justify-center py-20 gap-4">
+             <Loader2 className="w-8 h-8 text-zinc-500 animate-spin" />
+             <p className="text-zinc-600 text-sm font-mono">INITIALIZING UPLINK...</p>
+           </div>
+        )}
+
+        {/* Dashboard */}
+        {!loading && userData && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            {/* Sidebar: Profile */}
+            <aside className="lg:col-span-4 space-y-6">
+              <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 relative overflow-hidden">
+                <div className="flex flex-col items-center text-center relative z-10">
+                  <div className="relative group cursor-pointer">
+                    <div className="absolute -inset-1 bg-gradient-to-r from-zinc-700 to-zinc-600 rounded-full opacity-20 group-hover:opacity-40 blur transition duration-500"></div>
+                    <img 
+                      src={userData.avatar_url} 
+                      alt={userData.login} 
+                      className="relative w-32 h-32 rounded-full border-2 border-black object-cover"
+                    />
+                  </div>
+                  
+                  <h2 className="mt-4 text-2xl font-bold text-white tracking-tight">{userData.name || userData.login}</h2>
+                  <a 
+                    href={userData.html_url} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="text-zinc-500 hover:text-white transition-colors text-sm font-mono flex items-center gap-1 mt-1"
+                  >
+                    @{userData.login} <ExternalLink className="w-3 h-3" />
+                  </a>
+
+                  {userData.bio && (
+                    <p className="mt-4 text-zinc-400 text-sm leading-relaxed">
+                      {userData.bio}
+                    </p>
+                  )}
+
+                  <div className="mt-6 w-full grid grid-cols-3 gap-2 border-t border-zinc-800 pt-6">
+                    <div className="text-center">
+                      <div className="text-lg font-bold text-white">{userData.public_repos}</div>
+                      <div className="text-xs text-zinc-600 uppercase tracking-widest text-[10px]">Repos</div>
+                    </div>
+                    <div className="text-center border-l border-zinc-800">
+                      <div className="text-lg font-bold text-white">{userData.followers}</div>
+                      <div className="text-xs text-zinc-600 uppercase tracking-widest text-[10px]">Followers</div>
+                    </div>
+                    <div className="text-center border-l border-zinc-800">
+                      <div className="text-lg font-bold text-white">{userData.following}</div>
+                      <div className="text-xs text-zinc-600 uppercase tracking-widest text-[10px]">Following</div>
+                    </div>
+                  </div>
+                  
+                  {userData.location && (
+                     <div className="mt-6 w-full flex items-center justify-center gap-2 text-xs text-zinc-500 font-mono uppercase tracking-widest">
+                        <span>📍 {userData.location}</span>
+                     </div>
+                  )}
+                </div>
+              </div>
+            </aside>
+
+            {/* Content: Repositories */}
+            <div className="lg:col-span-8">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold flex items-center gap-2 text-white">
+                  <Book className="w-5 h-5 text-zinc-500" />
+                  Projects
+                </h3>
+                <span className="text-xs text-zinc-500 bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-full">
+                  Latest Updates
+                </span>
+              </div>
+
+              {repos.length === 0 ? (
+                <div className="text-center py-12 bg-zinc-900/50 rounded-xl border border-zinc-800 border-dashed">
+                  <p className="text-zinc-500">No public repositories found.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {repos.map((repo) => (
+                    <div
+                      key={repo.id}
+                      className="group relative flex flex-col md:flex-row justify-between p-5 bg-zinc-900 border border-zinc-800 hover:border-zinc-600 rounded-xl transition-all duration-200"
+                    >
+                      <div className="flex-1 min-w-0 pr-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="font-bold text-zinc-200 group-hover:text-white truncate">
+                            {repo.name}
+                          </h4>
+                          <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-[10px] text-zinc-400 border border-zinc-700">
+                            {repo.private ? 'Private' : 'Public'}
+                          </span>
+                        </div>
+                        
+                        <p className="text-sm text-zinc-400 mb-4 line-clamp-2">
+                          {repo.description || "No description provided."}
+                        </p>
+
+                        <div className="flex items-center gap-4 text-xs text-zinc-500">
+                          {repo.language && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-white/20"></span>
+                              {repo.language}
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <Star className="w-3.5 h-3.5" />
+                            {repo.stargazers_count}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <GitFork className="w-3.5 h-3.5" />
+                            {repo.forks_count}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 md:mt-0 md:pl-4 md:border-l md:border-zinc-800 flex flex-row md:flex-col justify-center gap-2 shrink-0">
+                         <button 
+                           onClick={() => openRepo(repo)}
+                           className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-white text-black hover:bg-zinc-200 rounded-lg text-sm font-semibold transition-colors"
+                         >
+                           <Code className="w-4 h-4" /> View Code
+                         </button>
+                         <a
+                           href={repo.html_url}
+                           target="_blank"
+                           rel="noreferrer"
+                           className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-zinc-800 text-zinc-300 hover:bg-zinc-700 rounded-lg text-sm font-medium transition-colors"
+                         >
+                           <ExternalLink className="w-4 h-4" /> GitHub
+                         </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!loading && !userData && !error && (
+          <div className="text-center py-24">
+            <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-zinc-800">
+               <Github className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">System Ready</h2>
+            <p className="text-zinc-500">Enter a target identity to initialize projection.</p>
+          </div>
+        )}
+      </main>
+
+      {/* Code Viewer Modal */}
+      {activeRepo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 w-full max-w-4xl h-[80vh] rounded-2xl border border-zinc-700 shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 border-b border-zinc-800 bg-zinc-950">
+               <div className="flex items-center gap-3 overflow-hidden">
+                 <button 
+                   onClick={activeRepo ? closeRepo : null}
+                   className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition"
+                 >
+                   <X className="w-5 h-5" />
+                 </button>
+                 <div className="flex flex-col">
+                   <h3 className="text-white font-bold flex items-center gap-2">
+                     {activeRepo.name}
+                     <span className="px-2 py-0.5 rounded bg-zinc-800 text-[10px] text-zinc-400 font-normal border border-zinc-700">beta</span>
+                   </h3>
+                   <div className="flex items-center gap-1 text-xs text-zinc-500 font-mono mt-1 overflow-hidden">
+                      <span className="flex-shrink-0">root/</span>
+                      <span className="truncate">{currentPath}</span>
+                   </div>
+                 </div>
+               </div>
+            </div>
+
+            {/* Modal Content Area */}
+            <div className="flex-1 overflow-auto bg-black p-0">
+               {explorerLoading ? (
+                 <div className="h-full flex flex-col items-center justify-center text-zinc-500 gap-3">
+                   <Loader2 className="w-8 h-8 animate-spin" />
+                   <p className="text-sm font-mono">Retrieving data...</p>
+                 </div>
+               ) : explorerError ? (
+                 <div className="h-full flex flex-col items-center justify-center text-red-400 gap-2 p-8 text-center">
+                   <AlertCircle className="w-8 h-8 opacity-50" />
+                   <p>{explorerError}</p>
+                   <button onClick={() => openRepo(activeRepo)} className="text-sm underline hover:text-white mt-2">Retry Root</button>
+                 </div>
+               ) : fileContent !== null ? (
+                 // File View
+                 <div className="h-full flex flex-col">
+                    <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-2 flex items-center gap-2">
+                      <button onClick={() => setFileContent(null)} className="text-xs text-zinc-400 hover:text-white flex items-center gap-1">
+                        <ArrowLeft className="w-3 h-3" /> Back to files
+                      </button>
+                    </div>
+                    <pre className="flex-1 p-4 overflow-auto text-xs sm:text-sm font-mono text-zinc-300 leading-relaxed">
+                      {fileContent}
+                    </pre>
+                 </div>
+               ) : (
+                 // Directory List
+                 <div className="divide-y divide-zinc-900">
+                    {currentPath && (
+                      <div 
+                        onClick={navigateUp}
+                        className="flex items-center gap-3 px-4 py-3 hover:bg-zinc-900/50 cursor-pointer text-zinc-400 hover:text-blue-400 transition-colors"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                        <span className="text-sm font-mono">..</span>
+                      </div>
+                    )}
+                    {dirContents.map((item) => (
+                      <div 
+                        key={item.path}
+                        onClick={() => handleItemClick(item)}
+                        className="flex items-center justify-between px-4 py-3 hover:bg-zinc-900 cursor-pointer group transition-colors"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {getFileIcon(item.name, item.type)}
+                          <span className={`text-sm font-mono truncate ${item.type === 'dir' ? 'text-zinc-200 group-hover:text-blue-200' : 'text-zinc-400 group-hover:text-zinc-200'}`}>
+                            {item.name}
+                          </span>
+                        </div>
+                        {item.type === 'dir' && <ChevronRight className="w-4 h-4 text-zinc-700 group-hover:text-zinc-500" />}
+                        {item.size > 0 && <span className="text-xs text-zinc-700 font-mono">{(item.size / 1024).toFixed(1)} KB</span>}
+                      </div>
+                    ))}
+                    {dirContents.length === 0 && (
+                      <div className="p-8 text-center text-zinc-600 text-sm">Empty directory</div>
+                    )}
+                 </div>
+               )}
+            </div>
+            
+            {/* Modal Footer */}
+            <div className="bg-zinc-950 p-2 border-t border-zinc-800 flex justify-center">
+               <span className="text-[10px] text-zinc-600 font-mono">
+                 Powered by GitHub API • Read-Only Mode
+               </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
